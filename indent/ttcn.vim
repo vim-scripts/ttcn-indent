@@ -1,12 +1,18 @@
 " Vim indent file
+"
 " Language:     TTCN-3
 " Maintainer:   Stefan Karlsson <stefan.74@comhem.se>
-" Last Change:  15 April 2004
+" Last Change:  22 July 2004
 
 if exists("b:did_indent")
     finish
 endif
 let b:did_indent = 1
+
+" Basic strategy for calculating the indent:
+" 
+" 1. Use cindent as far as possible
+" 2. Correct the indent for those parts where cindent fails
 
 
 setlocal indentexpr=Get_ttcn_indent(v:lnum)
@@ -21,7 +27,10 @@ if exists("*Get_ttcn_indent")
     finish
 endif
 
-function! Get_previous_code_line(lnum)
+
+" Returns the number of the closest previous line that contains code (i.e. it
+" skips blank lines and pure comment lines)
+function Get_previous_code_line(lnum)
     let i = a:lnum - 1
     while i > 0
         let i = prevnonblank(i)
@@ -40,43 +49,77 @@ function! Get_previous_code_line(lnum)
             break
         endif
     endwhile
-
     return i
 endfunction
 
-let s:w0 = '^\s*\i\+\s*:='
+" Returns true if the given line contains code
+function Is_code_line(lnum)
+    return Get_previous_code_line(a:lnum + 1) == a:lnum
+endfunction
 
-let s:w1 = '^\s*\(\<module\>\|\<group\>\|\<type\s\+component\>\|\<function\>'
-           \ . '\|\<testcase\>\|\<control\>\|\<alt\(step\)\?\>\|\<while\>'
-           \ . '\|\<do\>\|\<for\>\|\<if\>\|\<else\>\|\<interleave\>'
-           \ . '\|\(\(var\|const\|template\)\s\+\i\+\s\+\)\i\+\s\+:='
-           \ . '\|\<template\s\+\i\+\s\+\i\+\s*\(:=\|(\)\?\s*$\)'
+" Returns the value of a given component of the 'cindent' option
+function Parse_cindent(ch)
+    let pat = a:ch . '[0-9]\+s\?' 
+    let str = matchstr(&cinoptions, pat)
+    if str == ""
+        let n = &sw
+    else
+        let n = matchstr(str, '[0-9]\+')
+        if str =~# 's'
+            let n = n * &sw
+        endif
+    endif
+    return n
+endfunction
+
+" cindent has problems with these constructs
+let s:prob1 = '[^) \t]\s*:=\s*$'
+let s:prob2 = '^\s*\i\+\s*:='
+let s:prob3 = ',\s*$'
+
+" Start of code block
+let s:sblock = '^\s*\(\(module\|group\|type\|function\|testcase\|control\|alt\(step\)\?\|while\|do\|for\|if\|else\|interleave\)\>'
+            \. '\|\(var\|const\)\s\+\i\+\s\+\i\+\s*:='
+            \. '\|template\s\+\i\+\s\+\i\+\s*\(:=\|(\)'
+            \. '\|\i\+\s*:=\s*{\)'
 
 function Get_ttcn_indent(lnum)
+    let m1 = Get_previous_code_line(a:lnum)
+    let m2 = Get_previous_code_line(m1)
 
-    let n = Get_previous_code_line(a:lnum)
+    let prevl1 = getline(m1)
+    let prevl2 = getline(m2)
 
-    let prevl = getline(n)
-    let curl  = getline(a:lnum)
+    let thisl = getline(a:lnum)
 
-    if prevl =~# s:w0
-        if curl =~ '^\s*}'
-            let ind = indent(n) - &sw
+    if prevl1 =~# s:prob1
+        let ind = indent(m1) + Parse_cindent('+')
+    elseif prevl1 =~ s:prob2
+        if prevl1 =~ '{[^}]*$'
+            let ind = indent(m1) + &sw
         else
-            let ind = indent(n)
+            if thisl =~ '^\s*}'
+                let ind = indent(m1) - &sw
+            else
+                let ind = indent(m1)
+            endif
         endif
-    elseif curl =~# s:w0
-        let n   = searchpair('{','','}','Wbn')
+    elseif prevl1 =~ ':=\s*{'
+        let ind = indent(m1) + &sw
+    elseif thisl =~# s:prob2
+        let i = m1
 
-        while (n > 0) && getline(n) !~# s:w1
-            let n = Get_previous_code_line(n)
+        while i > 0 && getline(i) !~# s:sblock
+            let i = Get_previous_code_line(i)
         endwhile
 
-        if getline(n) =~# '\<alt\(step\)\?\>\|\<interleave\>'
-            let ind = indent(n) + 2*&sw
+        if getline(i) =~# '\<alt\(step\)\?\>\|\<interleave\>'
+            let ind = indent(i) + 2*&sw
         else
-            let ind = indent(n) + &sw
+            let ind = indent(i) + &sw
         endif
+    elseif prevl1 =~ s:prob3 || prevl2 =~ s:prob3 && !Is_code_line(a:lnum)
+        let ind = indent(m1)
     else
         let ind = cindent(a:lnum)
     endif
